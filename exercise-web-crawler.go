@@ -10,25 +10,51 @@ type Fetcher interface {
 	Fetch(url string) (body string, urls []string, err error)
 }
 
+type result struct {
+	url, body string
+	urls      []string
+	err       error
+	depth     int
+}
+
 // Crawl uses fetcher to recursively crawl
 // pages starting with url, to a maximum of depth.
 func Crawl(url string, depth int, fetcher Fetcher) {
-	// TODO: Fetch URLs in parallel.
-	// TODO: Don't fetch the same URL twice.
-	// This implementation doesn't do either:
-	if depth <= 0 {
-		return
+	results := make(chan *result)
+	fetched := make(map[string]bool)
+	fetch := func(url string, depth int) {
+		body, urls, err := fetcher.Fetch(url)
+		results <- &result{url, body, urls, err, depth}
 	}
-	body, urls, err := fetcher.Fetch(url)
-	if err != nil {
-		fmt.Println(err)
-		return
+
+	go fetch(url, depth)
+	fetched[url] = true
+
+	for fetching := 1; fetching > 0; fetching-- {
+		res := <-results
+
+		// フェッチ失敗したらスキップ
+		if res.err != nil {
+			fmt.Println(res.err)
+			continue
+		}
+
+		fmt.Printf("found: %s %q\n", res.url, res.body)
+
+		// follow links if depth has not been exhausted
+		if res.depth > 0 {
+			for _, u := range res.urls {
+				// フェッチ済みのURLを再フェッチしないように階層をデクリメント
+				if !fetched[u] {
+					fetching++
+					go fetch(u, res.depth-1)
+					fetched[u] = true
+				}
+			}
+		}
 	}
-	fmt.Printf("found: %s %q\n", url, body)
-	for _, u := range urls {
-		Crawl(u, depth-1, fetcher)
-	}
-	return
+
+	close(results)
 }
 
 func main() {
